@@ -13,6 +13,8 @@ logger.addHandler(file_handler)
 logger.setLevel(logging.INFO)
 
 TOKENS = 5
+TOKEN_LOCK = threading.Lock()
+
 
 
 # Define the HTTP request handler class
@@ -20,19 +22,27 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 # Override the do_GET method to handle GET requests
     def do_GET(self):
         global TOKENS  
-        # Set the response status code
-        if TOKENS > 0 :
-        
-            time.sleep(0.3)
-            TOKENS -=1
-            self.send_response(200)
-            # Set the response headers
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            # Write the response content
-            self.wfile.write(b"Hello, world!")
-            logger.info(f"the value of tokens is {TOKENS}")
-            time.sleep(3)
+
+
+        # only lock the shared state and separate the logic processing part
+        with TOKEN_LOCK:
+            if TOKENS > 0 :
+                time.sleep(0.3)
+                TOKENS -=1
+                allowed = True
+            else:
+                allowed = False
+
+
+        if allowed:
+                self.send_response(200)
+                # Set the response headers
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                # Write the response content
+                self.wfile.write(b"Hello, world!")
+                logger.info(f"the value of tokens is {TOKENS}")
+                time.sleep(1.5)
 
 
 
