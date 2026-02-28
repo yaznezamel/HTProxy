@@ -3,7 +3,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 import time
 import tracemalloc 
+import logging
 
+
+
+logger = logging.getLogger(__name__)
+file_handler = logging.FileHandler("app.log")
+logger.addHandler(file_handler)
+logger.setLevel(logging.INFO)
 
 TOKENS = 5
 
@@ -12,9 +19,11 @@ TOKENS = 5
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 # Override the do_GET method to handle GET requests
     def do_GET(self):
-        global TOKENS
+        global TOKENS  
         # Set the response status code
         if TOKENS > 0 :
+        
+            time.sleep(0.3)
             TOKENS -=1
             self.send_response(200)
             # Set the response headers
@@ -22,7 +31,10 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             # Write the response content
             self.wfile.write(b"Hello, world!")
+            logger.info(f"the value of tokens is {TOKENS}")
             time.sleep(3)
+
+
 
         else:
             self.send_response(429)
