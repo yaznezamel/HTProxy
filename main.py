@@ -5,6 +5,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import hashlib
+import uuid
+import time as time_mod
 
 logger = logging.getLogger(__name__)
 file_handler = logging.FileHandler("app.log")
@@ -59,8 +61,6 @@ def cpu_heavy_worker(task_queue, result_queue):
         except Exception as e:
             logger.error(f"Worker error: {e}")
 
-import uuid
-
 batch_queue = []
 batch_lock = threading.Lock()
 batch_condition = threading.Condition(batch_lock)
@@ -70,16 +70,17 @@ pending_requests_lock = threading.Lock()
 def batcher_thread_func(task_queue, batch_size=8, timeout=0.05):
     while True:
         with batch_condition:
-            # Wait until batch reaches batch_size or timeout occurs
-            # We must use wait() with timeout
+            while len(batch_queue) == 0:
+                batch_condition.wait()
+
+            # We have at least 1 item. Wait until we have batch_size, or timeout expires.
+            start_wait = time_mod.time()
             while len(batch_queue) < batch_size:
-                if len(batch_queue) > 0:
-                    # We have items, but less than batch_size, wait up to timeout
-                    batch_condition.wait(timeout)
+                elapsed = time_mod.time() - start_wait
+                remaining = timeout - elapsed
+                if remaining <= 0:
                     break
-                else:
-                    # No items, wait indefinitely
-                    batch_condition.wait()
+                batch_condition.wait(remaining)
 
             if len(batch_queue) > 0:
                 batch_to_send = batch_queue[:batch_size]
@@ -108,7 +109,15 @@ class ThreadPoolHTTPServer(HTTPServer):
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def process_request(self, request, client_address):
-        self.executor.submit(self.finish_request, request, client_address)
+        self.executor.submit(self._process_request_thread, request, client_address)
+
+    def _process_request_thread(self, request, client_address):
+        try:
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
 
     def server_close(self):
         super().server_close()
@@ -145,11 +154,12 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             batch_condition.notify_all()
 
         # Wait for the result from the multiprocessing workers
-        event.wait()
-
-        with pending_requests_lock:
-            if req_id in pending_requests:
-                del pending_requests[req_id]
+        try:
+            event.wait()
+        finally:
+            with pending_requests_lock:
+                if req_id in pending_requests:
+                    del pending_requests[req_id]
 
         if result_box:
             final_result = result_box[0]
@@ -196,7 +206,8 @@ def main():
         print("Server stopped.")
         
         # Cleanup
-        task_queue.put(None)
+        for _ in range(num_processes):
+            task_queue.put(None)
         result_queue.put(None)
         for p in workers:
             p.join(timeout=1)
